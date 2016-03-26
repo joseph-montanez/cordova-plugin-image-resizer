@@ -18,6 +18,8 @@ import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
+import android.media.ExifInterface;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.util.Log;
@@ -59,10 +61,52 @@ public class ImageResizer extends CordovaPlugin {
                 // load the image from uri
                 bitmap = loadScaledBitmapFromUri(uri, width, height);
 
+                // correct orientation
+                String path = FileHelper.getRealPath(uri, cordova);
+
+                ExifInterface exif = null;
+                try {
+                    exif = new ExifInterface(path);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                int orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
+                bitmap = rotateBitmap(bitmap, orientation);
+
+
                 // save the image as jpeg on the device
                 Uri scaledFile = saveFile(bitmap);
 
 //                callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, scaledFile.toString()));
+                return true;
+            } else if (action.equals("correctOrientation")) {
+                checkParameters(args);
+
+                // get the arguments
+                JSONObject jsonObject = args.getJSONObject(0);
+                uri = jsonObject.getString("uri");
+                folderName = jsonObject.getString("folderName");
+                quality = jsonObject.getInt("quality");
+
+                // load the image from uri
+                bitmap = loadBitmapFromUri(uri);
+
+                // correct orientation
+                String path = FileHelper.getRealPath(uri, cordova);
+
+                ExifInterface exif = null;
+                try {
+                    exif = new ExifInterface(path);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                int orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
+                bitmap = rotateBitmap(bitmap, orientation);
+
+
+                // save the image as jpeg on the device
+                Uri scaledFile = saveFile(bitmap);
+
                 return true;
             } else {
                 callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR));
@@ -103,19 +147,36 @@ public class ImageResizer extends CordovaPlugin {
         return null;
     }
 
+
+    /**
+     * Loads a Bitmap of the given android uri path
+     *
+     * @params uri the URI who points to the image
+     **/
+    private Bitmap loadBitmapFromUri(String uriString) {
+        try {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = false;
+            return BitmapFactory.decodeStream(FileHelper.getInputStreamFromUriString(uriString, cordova), null, options);
+        } catch (FileNotFoundException e) {
+            Log.e("Protonet", "File not found. :(");
+        } catch (IOException e) {
+            Log.e("Protonet", "IO Exception :(");
+        } catch (Exception e) {
+            Log.e("Protonet", e.toString());
+        }
+        return null;
+    }
+
     public void onRequestPermissionResult(int requestCode, String[] permissions,
-                                          int[] grantResults) throws JSONException
-    {
-        for(int r:grantResults)
-        {
-            if(r == PackageManager.PERMISSION_DENIED)
-            {
+                                          int[] grantResults) throws JSONException {
+        for (int r : grantResults) {
+            if (r == PackageManager.PERMISSION_DENIED) {
                 this.callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, PERMISSION_DENIED_ERROR));
                 return;
             }
         }
-        switch(requestCode)
-        {
+        switch (requestCode) {
             case IMAGE_RESIZER_PERMISSIONS:
                 Uri scaledFile = saveFile2(this.bitmap);
                 callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, scaledFile.toString()));
@@ -125,10 +186,11 @@ public class ImageResizer extends CordovaPlugin {
 
     private Uri saveFile(Bitmap bitmap) {
 
-        if(!PermissionHelper.hasPermission(this, permissions[0]) && !PermissionHelper.hasPermission(this, permissions[1])) {
+        if (!PermissionHelper.hasPermission(this, permissions[0]) && !PermissionHelper.hasPermission(this, permissions[1])) {
             PermissionHelper.requestPermissions(this, IMAGE_RESIZER_PERMISSIONS, permissions);
         } else {
             Uri scaledFile = saveFile2(this.bitmap);
+            Log.d("ImageResizer", String.format("scaledFile:%s", scaledFile.toString()));
             callbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, scaledFile.toString()));
         }
 
@@ -233,5 +295,48 @@ public class ImageResizer extends CordovaPlugin {
             return false;
         }
         return true;
+    }
+
+    public static Bitmap rotateBitmap(Bitmap bitmap, int orientation) {
+
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_NORMAL:
+                return bitmap;
+            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                matrix.setScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_180:
+                matrix.setRotate(180);
+                break;
+            case ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                matrix.setRotate(180);
+                matrix.postScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_TRANSPOSE:
+                matrix.setRotate(90);
+                matrix.postScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_90:
+                matrix.setRotate(90);
+                break;
+            case ExifInterface.ORIENTATION_TRANSVERSE:
+                matrix.setRotate(-90);
+                matrix.postScale(-1, 1);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_270:
+                matrix.setRotate(-90);
+                break;
+            default:
+                return bitmap;
+        }
+        try {
+            Bitmap bmRotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+            bitmap.recycle();
+            return bmRotated;
+        } catch (OutOfMemoryError e) {
+            e.printStackTrace();
+            return null;
+        }
     }
 }
